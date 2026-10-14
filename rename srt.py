@@ -1,23 +1,37 @@
 import os
 import re
+import tkinter as tk
 from pathlib import Path
 
 
-def rename_subtitles(directory_path):
+def get_clipboard_path():
+    try:
+        # Use tkinter to grab clipboard data natively in Windows
+        root = tk.Tk()
+        root.withdraw() # Hide the main window
+        clipboard_text = root.clipboard_get()
+        root.destroy()
+        
+        # Clean up any surrounding quotes or spaces from "Copy as path"
+        return clipboard_text.strip(' "\'\t\n\r')
+    except tk.TclError:
+        raise ValueError("The clipboard is empty or does not contain text.")
+
+def main():
+    try:
+        directory_path = get_clipboard_path()
+    except ValueError as e:
+        raise RuntimeError(f"Clipboard Error: {e}")
+
     target_dir = Path(directory_path)
-    
     if not target_dir.exists() or not target_dir.is_dir():
-        print(f"Error: The directory '{directory_path}' does not exist.")
-        return
+        raise NotADirectoryError(f"The path in your clipboard is not a valid directory:\n'{directory_path}'")
 
-    # Regular expression to match SxxExx (e.g., S05E06, s05e10)
     se_pattern = re.compile(r'[Ss](\d{2})[Ee](\d{2})')
-
-    # Dictionaries to store files by their (season, episode) tuple
     videos = {}
     subtitles = {}
 
-    # Scan directory and categorize files
+    # Scan and map files
     for file_path in target_dir.iterdir():
         if not file_path.is_file():
             continue
@@ -31,41 +45,36 @@ def rename_subtitles(directory_path):
             elif file_path.suffix.lower() == '.srt':
                 subtitles[season_ep] = file_path
 
-    # Keep track of which videos have matching subtitles
     missing_srts = []
+    rename_errors = []
 
-    # Process and rename
+    # Process files
     for season_ep, video_path in videos.items():
         if season_ep in subtitles:
             srt_path = subtitles[season_ep]
-            
-            # Construct the new subtitle name based on the video name
             new_srt_name = video_path.with_suffix('.srt')
             
-            # Rename if the name is not already identical
             if srt_path != new_srt_name:
                 try:
                     os.rename(srt_path, new_srt_name)
                     print(f"Renamed: '{srt_path.name}' -> '{new_srt_name.name}'")
                 except OSError as e:
-                    print(f"Failed to rename '{srt_path.name}': {e}")
-            else:
-                print(f"Already matches: '{srt_path.name}'")
+                    rename_errors.append(f"Failed to rename '{srt_path.name}': {e}")
         else:
             missing_srts.append(video_path.name)
 
-    # Print missing subtitles
-    print("\n--- Missing Subtitles ---")
+    # Error Evaluation
+    if rename_errors:
+        error_msg = "\n".join(rename_errors)
+        raise PermissionError(f"Encountered errors while renaming files:\n{error_msg}")
+
     if missing_srts:
-        for missing in sorted(missing_srts):
-            # Extract just the SxxExx part for cleaner output
-            match = se_pattern.search(missing)
-            ep_str = match.group(0).upper() if match else "Unknown"
-            print(f"Missing .srt for: {ep_str} ({missing})")
-    else:
-        print("No missing subtitles! Every video has a matching .srt file.")
+        missing_list = "\n".join(missing_srts)
+        # Throwing a real error for missing SRTs as requested
+        raise FileNotFoundError(f"Missing .srt files for the following videos:\n{missing_list}")
+
+    # If we get here, everything was successful!
+    print("Success: All subtitles renamed properly. No missing files.")
 
 if __name__ == "__main__":
-    # Replace this with your actual folder path
-    folder_path = r"C:\Torrents\Suits (2011) Season 1-9 S01-S09 (1080p BluRay x265 HEVC 10bit AAC 5.1 ImE)\Season 05"
-    rename_subtitles(folder_path)
+    main()
